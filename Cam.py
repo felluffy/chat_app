@@ -154,6 +154,10 @@ class ClientWin(QMainWindow):
 
         self.StartCameraButton = QPushButton()
         self.StartCameraButton.setText("Start Camera")
+
+    def initLogButton(self):
+        #open dialog and write all messages to a text
+        pass
         
 
     def createActions(self):
@@ -240,7 +244,13 @@ class ClientWin(QMainWindow):
         self.camera.changeCamNum(index)
         #print(index)
 
+class NewConnDialog(QDialog):
+    pass
+    # def __init__(self, parent: typing.Optional[QWidget], flags: typing.Union[QtCore.Qt.WindowFlags, QtCore.Qt.WindowType]) -> None:
+    #     super().__init__(parent=parent, flags=flags)
 
+class Client:
+    pass
 
 app = QApplication(sys.argv)
 win = ClientWin()
