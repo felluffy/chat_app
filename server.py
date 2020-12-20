@@ -7,12 +7,15 @@ import datetime
 
 #@TODO dellocation properly
 #add interface later
+#encrypt and decrypt data 
 
 class Server():
-    def __init__(self, host=socket.gethostbyname(socket.gethostname()), port=500, number_of_connections_to_listen_to=10000) -> None:
+    def __init__(self, host=socket.gethostbyname(socket.gethostname()), port=500, number_of_connections_to_listen_to=30) -> None:
         super().__init__()
         print(host)
-        self.number_of_connections_to_listen_to =number_of_connections_to_listen_to
+        self.confirmation_text = "Connection established"
+        self.chunksize = 1024
+        self.number_of_connections_to_listen_to = number_of_connections_to_listen_to
         self.host = host
         self.port = port
         self.listofclients = []
@@ -37,17 +40,21 @@ class Server():
 
     def listenForIncomingConnections(self): #should be a seperate thread and another for quitting the server
         try:
+            i = 0
             while True:
                 Client, address = self.sock.accept()
                 self.listofclients.append(Client)
-                Client.send(str.encode("Waiting on your partner to connect"))
-                print("sent confirmation")
+                i +=1
+                Client.send(str.encode("Waiting on your partner to connect %d" %(i)))
+                print("sent confirmation to", address)
+                Client.settimeout(600)
                 
                 #should be threaded
                 while True:
                     #get the ip address to connect to
-                    toConnectTo = Client.recv(1024)
+                    toConnectTo = Client.recv(self.chunksize)
                     toConnectTo = toConnectTo.decode('utf-8')
+                    print(toConnectTo)
                     #print(self.checkIpv4Adress(toConnectTo))
                     if(self.checkIpv4Adress(toConnectTo) == False and toConnectTo != 'random'):
                         print("not valid")
@@ -59,29 +66,34 @@ class Server():
                 #then start thread betwween the two to setup comms
                 #then set up cv as well
                 #and ftp
-                self.listofclients.append(Client)
-                self.client_dict[address] = Client
+                
                 
                 found = False
                 clientToConnectTo = None
                 #@TODO validate open connections only
-                if len(self.client_dict) > 1:
+                if len(self.client_dict) > 0:
                     for item in self.client_dict.keys():
-                        print(item)
                         if(toConnectTo == item[0]):
                             found = True
+                            print("Found")
                             clientToConnectTo = self.client_dict[item]
                             break
-
+                self.listofclients.append(Client)
+                self.client_dict[address] = Client
+                
                 if found is True:
                     #for chat
                     #send - rec
+                    Client.sendall(str.encode(self.confirmation_text))
+                    clientToConnectTo.sendall(str.encode(self.confirmation_text))
                     Thread(target=self.ThreadedClientConnections, args=(clientToConnectTo, Client), daemon=True).start()
                     # #rec - send
                     Thread(target=self.ThreadedClientConnections, args=(Client, clientToConnectTo), daemon=True).start()
 
                 self.thread_count += 1
                 print('Thread Number: ' + str(self.thread_count))    
+                # last = Client
+                # last.send(str.encode("dingbat"))
                 
         finally: 
             self.close_server()
@@ -93,11 +105,12 @@ class Server():
 
     def ThreadedClientConnections(self, Conn_A, Conn_B):
         #@TODO in chunks
-        data = "from %s %s" % (str(Conn_A.getsockname()), datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-        rec = Conn_A.recv(1024)
-        #store or do whatever with data
-        data = data + rec.decode('utf-8')
-        Conn_B.send(str.encode(data))
+        while True:
+            data = "from %s %s" % (str(Conn_A.getsockname()), datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+            rec = Conn_A.recv(self.chunksize)
+            #store or do whatever with data
+            data = data + rec.decode('utf-8')
+            Conn_B.send(str.encode(data))
     
     def isIPv4(self, s):
          try: return str(int(s)) == s and 0 <= int(s) <= 255
@@ -125,6 +138,7 @@ class Server():
         pass
 
     def closeConnection(self, conn_to_close):
+        self.thread_count -= 1
         pass
 
 
@@ -137,7 +151,7 @@ else:
     pass
 
 ser = Server(socket.gethostname())
-time.sleep(60) #keep open for 60 seconds
+time.sleep(3600) #keep open for 60 seconds
 #seconds = time.time()
 # while time.time() <= seconds + 10:
 #     pass

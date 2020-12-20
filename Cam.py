@@ -1,4 +1,13 @@
+#zero memory overflow checks
+#@TODO fix new connection after 1st connection
+
+from threading import Thread
+from threading import ThreadError
+import time
+from typing import Text
 from PyQt5.QtGui import QImage, QWindow
+import string
+from client import *
 from PyQt5.QtWidgets import QMainWindow, QAction, QMenu, QApplication
 from PyQt5.QtWidgets import QApplication, QMainWindow
 from PyQt5.QtWidgets import QLabel
@@ -11,12 +20,14 @@ import cv2
 import sys
 from PyQt5 import QtGui
 from PyQt5 import QtCore, QtGui, QtWidgets
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import QEvent, Qt
 from PyQt5.QtGui import QImage, QPixmap, QPalette, QPainter
 from PyQt5.QtPrintSupport import QPrintDialog, QPrinter
 from PyQt5.QtWidgets import QLabel, QSizePolicy, QScrollArea, QMessageBox, QMainWindow, QMenu, QAction, \
     qApp, QFileDialog
 
+def randomStringGen(size=6, chars=string.ascii_uppercase + string.digits): #stackoverflow
+    return ''.join(random.choice(chars) for _ in range(size))
 
 class Camera:
     def __init__(self, cam_num = 0):
@@ -89,18 +100,22 @@ class ClientWin(QMainWindow):
             self.camera = camera
         else:
             self.camera = Camera()
+        self.client = Client()
+        self.confimation_text = self.client.confirmation_text
         
         self.initMenuBar()
+        self.initSendButton()
         self.initChatBox()
         self.initCameraBox()
         self.initComboBox()
         self.initSendTextBox()
         self.initStatusBar()
-        self.initSendButton()
         self.initSelfFrame()
         self.initToolbar()
         self.setlayout()
         
+    def onNewConnection(self):
+        pass
 
     def initComboBox(self):
         self.CameraListBox = QComboBox()
@@ -116,14 +131,54 @@ class ClientWin(QMainWindow):
         self.ChatWindow = QTextBrowser()
         self.ChatWindow.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.ChatWindow.append('Send over a message, go on.')
+        #self.updateChatBox()
 
     def initSendTextBox(self):
         self.SendTextEditor = QTextEdit()
+        self.SendTextEditor.setPlaceholderText("Write something")
+        #self.SendTextEditor.keyPressEvent = self.sendTextChanged
+        self.SendTextEditor.installEventFilter(self)
+
+    def eventFilter(self, source, event):
+        if (event.type() == QEvent.KeyPress and event.key() == Qt.Key_Return and event.key() != Qt.Key_Shift and
+            source is self.SendTextEditor):
+            self.onSendButton()
+            #print("da")
+            return True
+        return super(ClientWin, self).eventFilter(source, event)
+
+    def sendTextChanged(self, e):
+        #super(ClientWin, self).keyPressEvent(e)
+        print(e)
+        e.accept()
+
         
     
     def initSendButton(self):
         self.sendButton = QPushButton()
         self.sendButton.setText('send text')
+        self.sendButton.clicked.connect(self.onSendButton)
+        self.sendButton.setEnabled(False)
+        self.checkTr = Thread(target=self.checkConnection, args=(1,), daemon=True)
+        self.checkTr.start()
+    
+    def checkConnection(self, everyXSeconds=5):
+        print("Thread")
+        while True:
+            print("Thread")
+            if self.confimation_text in self.ChatWindow.toPlainText():
+                self.sendButton.setEnabled(True)
+                self.sendButton.setFocusPolicy(Qt.StrongFocus)
+                break
+            time.sleep(everyXSeconds)
+
+        self.checkTr.terminate()
+
+
+    def onSendButton(self):
+        self.client.send_data_tcp(self.SendTextEditor.toPlainText(), self.ChatWindow)
+        self.SendTextEditor.setText("")
+
 
     def initCameraBox(self):
         self.imageLabel = QLabel()
@@ -234,9 +289,25 @@ class ClientWin(QMainWindow):
         #toolbar.setIconSize(QtGui.QSize(16,16))
         self.addToolBar(toolbar)
         
-    
     def newConnection(self):
-        print("New connection widget")
+        dl = NewConnDialog(self)
+        if dl.exec_():
+            ret = dl.getLineTextValue()
+            print(ret)
+            # if self.client is not None:
+            #     del(self.client)
+            #     self.client = Client()
+            try:
+                self.client.set_server_addr()   
+                self.client.send_data_tcp(ret)
+                self.updateChatBox()
+            except:
+                print("sth")
+
+        self.sendButton.setEnabled(False)
+        
+        #handle client 
+        
     def disconnectConnection(self):
         print("Disconnect")
 
@@ -244,13 +315,98 @@ class ClientWin(QMainWindow):
         self.camera.changeCamNum(index)
         #print(index)
 
-class NewConnDialog(QDialog):
-    pass
-    # def __init__(self, parent: typing.Optional[QWidget], flags: typing.Union[QtCore.Qt.WindowFlags, QtCore.Qt.WindowType]) -> None:
-    #     super().__init__(parent=parent, flags=flags)
+    def updateChatBox(self):
+        self.ChatWindow.clear()
+        self.ChatWindow.append("Send over a message")
+        self.hookChatWindow()
+        pass
 
-class Client:
-    pass
+    def hookChatWindow(self):
+        try:
+            self.client.startThreads(self.ChatWindow)
+        except ThreadError as e:
+            print(str(e))
+
+class NewConnDialog(QDialog):
+    def __init__(self, parent=None, *args, **kwargs):
+        super(NewConnDialog, self).__init__(*args, **kwargs)
+        self.setWindowTitle("Set up a new connection") 
+        self.parent = parent
+        layout = QVBoxLayout()
+        layout_hoz = QHBoxLayout()
+        self.setMaximumSize(300, 80)
+        
+        self.label = QLabel("Enter recipients ip")
+        self.label.setText("Enter recipients ip")
+        self.lineEdit = QLineEdit()
+        self.lineEdit.setAlignment(Qt.AlignRight)
+        self.lineEdit.textChanged.connect(self.onlineEditChanged)
+        self.setWhatsThis("Insert ip - xxx.xxx.xxx.xxx")
+        self.setWindowFlags(Qt.WindowCloseButtonHint)
+        self.lineEdit.setMinimumWidth(100)
+
+        layout_hoz.addWidget(self.label)
+        layout_hoz.addWidget(self.lineEdit)
+
+        self.cancelButton = QPushButton()
+        self.cancelButton.setText("Close")
+        self.cancelButton.clicked.connect(self.close)
+        self.cancelButton.setFocusPolicy(Qt.NoFocus)
+        self.cancelButton.setFocusPolicy(Qt.StrongFocus)
+        self.connectButton = QPushButton()
+        self.cancelButton.setAutoDefault(False)
+        self.connectButton.setText("Connect")
+        self.connectButton.clicked.connect(self.onconnectbutton)
+        self.connectButton.setDisabled(True)
+        layout_bot = QHBoxLayout()
+        layout_bot.setAlignment(Qt.AlignRight)
+
+        layout_bot.addWidget(self.cancelButton)
+        layout_bot.addWidget(self.connectButton)
+
+        layout.addLayout(layout_hoz)
+        layout.addLayout(layout_bot)
+        
+        self.setLayout(layout)
+
+    def onconnectbutton(self):
+        #parent -> execute get value from dialog  -> then dispose
+        if self.parent is None:
+            print("No parent")
+        self.accept()
+        pass
+    def onlineEditChanged(self, text):
+        self.checkText(text)
+        pass
+
+    def checkText(self, text):
+        if(self.checkIpv4Adress(text)):
+            print("check")
+            self.connectButton.setEnabled(True)
+        else:
+            print("no check")
+            self.connectButton.setEnabled(False)
+
+    def getLineTextValue(self):
+        return self.lineEdit.text()
+
+    def isIPv4(self, s):
+        try: return str(int(s)) == s and 0 <= int(s) <= 255
+        except: return False
+         
+    def checkIpv4Adress(self, ip):
+        if ip.count(".") == 3 and all(self.isIPv4(i) for i in ip.split(".")):
+            return True
+        else:
+            return False
+
+    def __del__(self):
+        self.lineEdit.setText = ""
+
+
+
+#hold a client, and update on 
+
 
 app = QApplication(sys.argv)
 win = ClientWin()
