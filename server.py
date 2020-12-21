@@ -148,6 +148,12 @@ class Server():
         self.thread_count -= 1
         pass
 
+    def decrypt(self, data):
+        pass
+
+    def encrpyt(self, data):
+        pass
+
 
 
 # class ClientThread(threading.Thread):

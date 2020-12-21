@@ -4,6 +4,7 @@
 from threading import Thread
 from threading import ThreadError
 import time
+import numpy as np
 from typing import Text
 from PyQt5.QtGui import QImage, QWindow
 import string
@@ -30,41 +31,68 @@ def randomStringGen(size=6, chars=string.ascii_uppercase + string.digits): #stac
     return ''.join(random.choice(chars) for _ in range(size))
 
 class Camera:
+    #might make it a part of the client
+    #@TODO use compression to lower bandwidth
     def __init__(self, cam_num = 0):
         self.cam_num = cam_num
         self.cap = None
+        self.height = 720
+        self.width = 1280
+        self.enabled = False
 
     def changeCamNum(self, cam_num):
-        self.closeCamera()
         self.cam_num = cam_num
-        self.cap = cv2.VideoCapture(self.cam_num)
-        if not self.cap.isOpened():
-            print("Camera couldn't start")
 
     def initalize(self):
-        self.cam_num = self.cam_num
-        self.cap = cv2.VideoCapture(self.cam_num)
+        self.cap = cv2.VideoCapture(self.cam_num, cv2.CAP_DSHOW)
         if not self.cap.isOpened():
             print("Camera couldn't start")
             #sys.exit()
-    
+        self.enabled = True
+        print("camera started")
+
     def closeCamera(self):
-        self.cap.release()
+        if self.cap is not None:
+            self.enabled = False
+            self.cap.release()
+            cv2.destroyAllWindows()
     
     def getFrame(self):
-        self.ret, self.frame = self.cap.read()
-        return self.frame
+        if self.cap.isOpened():
+            self.ret, self.frame = self.cap.read()
+            return self.frame
+        return None
 
     def captureStream(self, numFrames):
         pass
+
     def getBrightness(self):
         return self.cap.get(cv2.CAP_PROP_BRIGHTNESS)
+
     def setBrightness(self, val):
         self.cap.set(cv2.CAP_PROP_BRIGHTNESS, val)
 
     def setRes(height, width):
         pass
+    
+    def convToQtLabel(self, frame):
+        if frame.all() == None:
+            return None 
 
+        filtered = self.applyFiltersToFrame(frame)
+        h, w, ch = filtered.shape
+        bytes_per_line = ch * w
+        convert_to_Qt_format = QtGui.QImage(filtered.data, w, h, bytes_per_line, QtGui.QImage.Format_RGB888)
+        ret = convert_to_Qt_format.scaled(self.width, self.height, Qt.KeepAspectRatio)
+        return QPixmap.fromImage(ret)
+
+    def cameraIsOpen(self):
+        return self.enabled
+    
+    def applyFiltersToFrame(self, frame):
+        rgb_im = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        return rgb_im
+        pass
 
     def list_cameras(self):
         #https://stackoverflow.com/questions/57577445/list-available-cameras-opencv-python?noredirect=1&lq=1
@@ -73,35 +101,36 @@ class Camera:
         working_ports = []
         available_ports = []
         while is_working:
-            camera = cv2.VideoCapture(dev_port)
-            if not camera.isOpened():
+            camer = cv2.VideoCapture(dev_port, cv2.CAP_DSHOW)
+            if not camer.isOpened():
                 is_working = False
-                print("Port %s is not working." %dev_port)
+                #print("Port %s is not working." %dev_port)
             else:
-                is_reading, img = camera.read()
-                w = camera.get(3)
-                h = camera.get(4)
+                is_reading, img = camer.read()
+                w = camer.get(3)
+                h = camer.get(4)
                 if is_reading:
-                    print("Port %s is working and reads images (%s x %s)" %(dev_port,h,w))
+                    #print("Port %s is working and reads images (%s x %s)" %(dev_port,h,w))
                     working_ports.append(dev_port)
                 else:
-                    print("Port %s for camera ( %s x %s) is present but does not reads." %(dev_port,h,w))
+                    #print("Port %s for camer ( %s x %s) is present but does not reads." %(dev_port,h,w))
                     available_ports.append(dev_port)
             dev_port +=1
-
-        return available_ports,working_ports
+        cv2.destroyAllWindows()
+        return available_ports, working_ports
 
 class ClientWin(QMainWindow):
     def __init__(self, camera = None, *args, **kwargs) -> None:
         super(ClientWin, self).__init__(*args, **kwargs)
         self.setGeometry(100, 100, 1280, 720) 
-        self.setMinimumSize(1280, 720);
+        self.setMinimumSize(1280, 720)
         if camera != None:
             self.camera = camera
         else:
             self.camera = Camera()
         self.client = Client()
         self.confimation_text = self.client.confirmation_text
+        self.stream_video = False
         
         self.initMenuBar()
         self.initSendButton()
@@ -109,6 +138,8 @@ class ClientWin(QMainWindow):
         self.initChatBox()
         self.initCameraBox()
         self.initComboBox()
+        self.initAudioInputCombo()
+        self.initAudioOutputCombo()
         self.initSendTextBox()
         self.initStatusBar()
         self.initSelfFrame()
@@ -117,14 +148,70 @@ class ClientWin(QMainWindow):
 
         self.checkTr = Thread(target=self.checkConnection, args=(1,), daemon=True)
         self.checkTr.start()
-        
+        self.videoTr = Thread(target=self.startCamera, args=(), daemon=False)
+
+        self.video_enabled = False
+
+
+    def updateSelfFrame(self):
+        ret = self.camera.getFrame()
+        qt_lab = self.camera.convToQtLabel(ret)
+        scaled_qt_lab = qt_lab.scaled(self.selfFrameWidth, self.selfFrameHeight, Qt.IgnoreAspectRatio)
+        self.selfFrame.setPixmap(scaled_qt_lab)
+
+    def toggleVideo(self, toggle=True):
+        toggle=True
+        print(toggle)
+        if (not self.camera.enabled and toggle):
+            if self.videoTr.is_alive():
+                self.videoTr.join()
+            self.videoTr = Thread(target=self.startCamera, args=(), daemon=False)
+            self.videoTr.start()
+            self.video_enabled = True
+        else:
+            print("Dying")
+            self.camera.closeCamera()
+            self.video_enabled = False
+
+
+    
+    #zn
+    def startCamera(self):
+        self.camera.initalize()
+        print(self.camera.cameraIsOpen())
+        try:
+            while self.camera.enabled is True:
+                self.updateSelfFrame()
+        except RuntimeError as re:
+            print(re)
+        print("Thread finished")
         
     def onNewConnection(self):
         pass
 
+    def initAudioInputCombo(self):
+        self.AudioInputList = QComboBox()
+        self.AudioInputList.setPlaceholderText("Select input device")
+        self.inflateComboBox(self.AudioInputList)
+        self.AudioInputList.currentIndexChanged.connect(self.selectAudioIn)
+        self.AudioInputList.setToolTip('Select input device')
+        self.AudioInputList.setToolTipDuration(1000)
+
+    def initAudioOutputCombo(self):
+        self.AudioOutputList = QComboBox()
+        self.AudioOutputList.setPlaceholderText("Select output device")
+        self.inflateComboBox(self.AudioOutputList)
+        self.AudioOutputList.currentIndexChanged.connect(self.selectAudioOut)
+        self.AudioOutputList.setToolTip('Select output device')
+        self.AudioOutputList.setToolTipDuration(1000)
+
     def initComboBox(self):
         self.CameraListBox = QComboBox()
-        self.CameraListBox.setToolTip('select camera')
+        self.CameraListBox.setPlaceholderText("Select camera device")
+        av, wo = self.camera.list_cameras()
+        self.inflateComboBox(self.CameraListBox, wo)
+        self.CameraListBox.setToolTip('Select camera')
+        self.CameraListBox.currentIndexChanged.connect(self.selectCamera)
         self.CameraListBox.setToolTipDuration(1000)
 
     def initStatusBar(self):
@@ -167,6 +254,34 @@ class ClientWin(QMainWindow):
         print(e)
         e.accept()
 
+    def selectCamera(self, index):
+        self.camera.closeCamera()
+        if self.video_enabled is False: #restart video if already was playing
+            return
+
+        if self.videoTr.isAlive():
+            self.videoTr.signal = False
+            self.camera.changeCamNum(index)
+            self.videoTr.join()
+
+        self.videoTr = Thread(target=self.startCamera, args=(), daemon=False)
+        self.videoTr.start()
+#        
+ ##       self.videoTr.start()
+
+    def selectAudioOut(self, index):
+        pass
+
+    def selectAudioIn(self, index):
+
+        pass
+
+    def inflateComboBox(self, combo, items=["A", "B"]):
+        if combo is None:
+            return
+
+        for item in items:
+            combo.addItem(str(item))
         
     
     def initSendButton(self):
@@ -177,7 +292,7 @@ class ClientWin(QMainWindow):
     
     def checkConnection(self, everyXSeconds=5):
         while True:
-            print("Waiting on an incoming connection")
+            #print("Waiting on an incoming connection")
             if self.confimation_text in self.ChatWindow.toPlainText():
                 self.sendButton.setEnabled(True)
                 self.toggleAudioButton.setEnabled(True)
@@ -211,6 +326,8 @@ class ClientWin(QMainWindow):
     def initSelfFrame(self):
         self.selfFrame = QLabel()
         self.selfFrame.setBackgroundRole(QPalette.Highlight)
+        self.selfFrameHeight = 150
+        self.selfFrameWidth = 180
         self.selfFrame.setMinimumSize(100, 100)
         self.image_ = QImage("tem.png")
         if self.image_.isNull():
@@ -222,6 +339,7 @@ class ClientWin(QMainWindow):
 
         self.StartCameraButton = QPushButton()
         self.StartCameraButton.setText("Start Camera")
+        self.StartCameraButton.clicked.connect(self.toggleVideo)
 
     def initLogButton(self):
         #open dialog and write all messages to a text
@@ -240,7 +358,13 @@ class ClientWin(QMainWindow):
         self.setCentralWidget(self._centralWidget)
         self._centralWidget.setLayout(self.generalLayout)
         layout_hoz = QVBoxLayout()
-        layout_hoz.addWidget(self.CameraListBox)
+        layout_hoz_h = QHBoxLayout()
+        layout_hoz_h.addWidget(self.CameraListBox)
+        layout_hoz_h.addWidget(self.AudioOutputList)
+        layout_hoz_h.addWidget(self.AudioInputList)
+
+        layout_hoz.addLayout(layout_hoz_h)
+
         layout_hoz.addWidget(self.ChatWindow)
 
         layout_top = QHBoxLayout()
@@ -331,8 +455,7 @@ class ClientWin(QMainWindow):
     def disconnectConnection(self):
         print("Disconnect")
 
-    def selectCamera(self, index):
-        self.camera.changeCamNum(index)
+
         #print(index)
 
     def updateChatBox(self):

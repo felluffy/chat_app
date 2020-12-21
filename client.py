@@ -92,6 +92,11 @@ class Client:
             self.mic.stop()
         pass
 
+    def encryptData(self, data):
+        pass
+    def decryptData(self, data):
+        pass
+
 # print()
 # print('Waiting for connection response')
 # try:
