@@ -26,11 +26,10 @@ class Server():
 
         try:
             self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            # self.sock_UDP = socket.socket(socket.AF_INET, socket.SOCK_DGRAM) #to send video stream
-            # self.sock_UDP.bind((self.host, self.port))
+            self.sock_UDP = socket.socket(socket.AF_INET, socket.SOCK_DGRAM) #to send video stream
+            self.sock_UDP.bind((self.host, self.port))
             self.sock.bind((self.host, self.port))
             self.sock.listen(self.number_of_connections_to_listen_to)
-            # self.sock_UDP.listen(self.number_of_connections_to_listen_to)
             print(self.sock.getsockname()) #+ " waiting for new connections")
         except socket.error as e:
             print(e)
@@ -90,6 +89,8 @@ class Server():
                     # #rec - send
                     Thread(target=self.ThreadedClientConnections, args=(Client, clientToConnectTo), daemon=True).start()
 
+
+
                 self.thread_count += 1
                 print('Thread Number: ' + str(self.thread_count))    
                 # last = Client
@@ -111,6 +112,12 @@ class Server():
             #store or do whatever with data
             data = data + rec.decode('utf-8')
             Conn_B.send(str.encode(data))
+
+    def ThreadedUDPConnections(self, Conn_A, Conn_B):
+        while True:
+            rec = Conn_A.recv(self.chunksize)
+            Conn_B.send(rec)
+
     
     def isIPv4(self, s):
          try: return str(int(s)) == s and 0 <= int(s) <= 255

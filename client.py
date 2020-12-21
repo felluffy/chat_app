@@ -1,5 +1,6 @@
 import socket
 from threading import Thread
+from mic import *
 import traceback
 import logging
 
@@ -13,7 +14,9 @@ class Client:
         self.number_of_connections_to_listen_to = 10
         self.threads = []
         self.ClientSocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        #self.ClientSocketUDP = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.mic = MicInput()
+        
+        self.ClientSocketUDP = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         #self.set_server_addr(sever_addr, server_port, True)
         
         
@@ -31,14 +34,14 @@ class Client:
         except socket.error as e:
             print(str(e), " :error")
 
-    def tryConnect(self, timeout=5):
+    def tryConnect(self, timeout=30):
         self.ClientSocket.settimeout(timeout)
         self.ClientSocket.connect((self.server_addr, self.server_port))
         #self.ClientSocket.listen(self.number_of_connections_to_listen_to)
         #self.ClientSocketUDP.listen(self.number_of_connections_to_listen_to)
         #enable for udp conns
-        #self.ClientSocketUDP.connect((self.server_addr, self.server_port))
-        #self.ClientSocketUDP.settimeout(timeout)
+        self.ClientSocketUDP.connect((self.server_addr, self.server_port))
+        self.ClientSocketUDP.settimeout(timeout)
 
 
     def rec_data(self, LabelToAddTo=None):
@@ -80,6 +83,14 @@ class Client:
         self.threads.clear()
         self.ClientSocket.close()
         # self.ClientSocketUDP.close()
+
+
+    def toogleSound(self, toggle = True):
+        if (not self.mic.enabled and toggle):
+            self.mic.startMic(socket_to_listen_to=self.ClientSocketUDP)
+        else:
+            self.mic.stop()
+        pass
 
 # print()
 # print('Waiting for connection response')

@@ -105,6 +105,7 @@ class ClientWin(QMainWindow):
         
         self.initMenuBar()
         self.initSendButton()
+        self.initAudioButton()
         self.initChatBox()
         self.initCameraBox()
         self.initComboBox()
@@ -113,6 +114,10 @@ class ClientWin(QMainWindow):
         self.initSelfFrame()
         self.initToolbar()
         self.setlayout()
+
+        self.checkTr = Thread(target=self.checkConnection, args=(1,), daemon=True)
+        self.checkTr.start()
+        
         
     def onNewConnection(self):
         pass
@@ -139,6 +144,16 @@ class ClientWin(QMainWindow):
         #self.SendTextEditor.keyPressEvent = self.sendTextChanged
         self.SendTextEditor.installEventFilter(self)
 
+    def initAudioButton(self):
+        self.toggleAudioButton = QPushButton()
+        self.toggleAudioButton.clicked.connect(self.onClickAudioButton)
+        self.toggleAudioButton.setEnabled(False)
+        self.toggleAudioButton.setText("a/d audio")
+        pass
+
+    def onClickAudioButton(self):
+        self.client.toogleSound()
+
     def eventFilter(self, source, event):
         if (event.type() == QEvent.KeyPress and event.key() == Qt.Key_Return and event.key() != Qt.Key_Shift and
             source is self.SendTextEditor):
@@ -159,15 +174,13 @@ class ClientWin(QMainWindow):
         self.sendButton.setText('send text')
         self.sendButton.clicked.connect(self.onSendButton)
         self.sendButton.setEnabled(False)
-        self.checkTr = Thread(target=self.checkConnection, args=(1,), daemon=True)
-        self.checkTr.start()
     
     def checkConnection(self, everyXSeconds=5):
-        print("Thread")
         while True:
-            print("Thread")
+            print("Waiting on an incoming connection")
             if self.confimation_text in self.ChatWindow.toPlainText():
                 self.sendButton.setEnabled(True)
+                self.toggleAudioButton.setEnabled(True)
                 self.sendButton.setFocusPolicy(Qt.StrongFocus)
                 break
             time.sleep(everyXSeconds)
@@ -234,7 +247,14 @@ class ClientWin(QMainWindow):
         layout_bottom = QHBoxLayout()
         layout_vert_bot = QVBoxLayout()
         layout_vert_bot.addWidget(self.selfFrame)
-        layout_vert_bot.addWidget(self.StartCameraButton)
+
+        #audio cam on the bot
+        layout_vert_bot_h = QHBoxLayout()
+        layout_vert_bot_h.addWidget(self.StartCameraButton)
+        layout_vert_bot_h.addWidget(self.toggleAudioButton)
+        
+        layout_vert_bot.addLayout(layout_vert_bot_h)
+
         layout_bottom.addLayout(layout_vert_bot)
         layout_bottom.addWidget(self.SendTextEditor) 
         #layout_bottom.SetFixedSize(300, 200)
@@ -305,7 +325,7 @@ class ClientWin(QMainWindow):
                 print("sth")
 
         self.sendButton.setEnabled(False)
-        
+        self.toggleAudioButton.setEnabled(False)
         #handle client 
         
     def disconnectConnection(self):
