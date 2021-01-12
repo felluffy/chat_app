@@ -4,6 +4,7 @@
 from threading import Thread
 from threading import ThreadError
 import time
+import zlib
 import numpy as np
 from typing import Text
 from PyQt5.QtGui import QImage, QWindow
@@ -61,7 +62,18 @@ class Camera:
         if self.cap.isOpened():
             self.ret, self.frame = self.cap.read()
             return self.frame
-        return None
+        return 
+    
+    def compressFrame(self, frame, quality = 25):
+        if frame.all() == None:
+            return None 
+        compress_img = cv2.imencode('.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), quality])[1]
+        dat = compress_img.tobytes()
+        self.comp_frame = zlib.compress(dat, zlib.Z_BEST_COMPRESSION)
+        return self.comp_frame
+
+    def getCompressedFrame(self):
+        return self.comp_frame
 
     def captureStream(self, numFrames):
         pass
@@ -75,24 +87,38 @@ class Camera:
     def setRes(height, width):
         pass
     
-    def convToQtLabel(self, frame):
+    def convToQtLabel(self, frame, mode = 'gs'):
         if frame.all() == None:
             return None 
 
-        filtered = self.applyFiltersToFrame(frame)
-        h, w, ch = filtered.shape
+        #filtered = self.applyFiltersToFrame(frame, 'gs')
+        
+        if len(frame.shape) == 2:# or mode == 'gs':
+            ch = 1
+            Conv = QtGui.QImage.Format_Grayscale8
+            h, w = frame.shape
+        else:
+            h, w, ch = frame.shape
+            Conv = QtGui.QImage.Format_RGB888
         bytes_per_line = ch * w
-        convert_to_Qt_format = QtGui.QImage(filtered.data, w, h, bytes_per_line, QtGui.QImage.Format_RGB888)
+        #Conv = mode
+            
+        convert_to_Qt_format = QtGui.QImage(frame.data, w, h, bytes_per_line, Conv)
         ret = convert_to_Qt_format.scaled(self.width, self.height, Qt.KeepAspectRatio)
         return QPixmap.fromImage(ret)
 
     def cameraIsOpen(self):
         return self.enabled
     
-    def applyFiltersToFrame(self, frame):
+    def applyFiltersToFrame(self, frame, type_='gs'):
+        if frame.all() == None:
+            return None 
+        if type_ == 'gs':
+            gs_img = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            return gs_img
+
         rgb_im = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         return rgb_im
-        pass
 
     def list_cameras(self):
         #https://stackoverflow.com/questions/57577445/list-available-cameras-opencv-python?noredirect=1&lq=1
@@ -128,7 +154,7 @@ class ClientWin(QMainWindow):
             self.camera = camera
         else:
             self.camera = Camera()
-        self.client = Client()
+        self.client = Client(parent_ = self)
         self.confimation_text = self.client.confirmation_text
         self.stream_video = False
         
@@ -143,7 +169,7 @@ class ClientWin(QMainWindow):
         self.initSendTextBox()
         self.initStatusBar()
         self.initSelfFrame()
-        self.initToolbar()
+        self.initToolbar()  
         self.setlayout()
 
         self.checkTr = Thread(target=self.checkConnection, args=(1,), daemon=True)
@@ -151,13 +177,37 @@ class ClientWin(QMainWindow):
         self.videoTr = Thread(target=self.startCamera, args=(), daemon=False)
 
         self.video_enabled = False
+        self.closeEvent = self.closeEvent_
+        #app.aboutToQuit.connect(self.closeEvent)
+        # finish = QAction("Quit", self)
+        # finish.triggered.connect(self.closeEvent)
+        #self.aboutToQuit.connect(self.closeEvent)
+
+    def updateImageLabel(self, frame):
+        if frame is None:
+            self.setDefaultImage(self.imageLabel)
+            return
+        qt_lab = self.camera.convToQtLabel(frame)
+        scaled_qt_lab = qt_lab.scaled(self.imageLabelWidth, self.imageLabelHeight, Qt.IgnoreAspectRatio)
+        self.imageLabel.setPixmap(scaled_qt_lab)
 
 
     def updateSelfFrame(self):
         ret = self.camera.getFrame()
-        qt_lab = self.camera.convToQtLabel(ret)
+        if ret is None:
+            self.setDefaultImage(self.selfFrame)
+            return
+        # qt_lab, filtered = self.camera.convToQtLabel(ret)
+        # scaled_qt_lab = qt_lab.scaled(self.selfFrameWidth, self.selfFrameHeight, Qt.IgnoreAspectRatio)
+        # self.selfFrame.setPixmap(scaled_qt_lab)
+
+                
+        filtered = self.camera.applyFiltersToFrame(ret, 'gs')
+        qt_lab = self.camera.convToQtLabel(filtered, 'gs')
+        compressed = self.camera.compressFrame(filtered)
         scaled_qt_lab = qt_lab.scaled(self.selfFrameWidth, self.selfFrameHeight, Qt.IgnoreAspectRatio)
         self.selfFrame.setPixmap(scaled_qt_lab)
+        self.client.sendFrame(compressed)
 
     def toggleVideo(self, toggle=True):
         toggle=True
@@ -168,10 +218,18 @@ class ClientWin(QMainWindow):
             self.videoTr = Thread(target=self.startCamera, args=(), daemon=False)
             self.videoTr.start()
             self.video_enabled = True
+            self.StartCameraButton.setText("Stop Camera")
+
+            #pass over to server then to client to start feed
+            self.client.send_data_tcp(self.client.VideoStartText)
+
         else:
             print("Dying")
             self.camera.closeCamera()
             self.video_enabled = False
+            self.StartCameraButton.setText("Start Camera")
+            self.client.send_data_tcp(self.client.VideoStopText)
+
 
 
     
@@ -185,6 +243,7 @@ class ClientWin(QMainWindow):
         except RuntimeError as re:
             print(re)
         print("Thread finished")
+        self.setDefaultImage(self.selfFrame)
         
     def onNewConnection(self):
         pass
@@ -300,7 +359,6 @@ class ClientWin(QMainWindow):
                 break
             time.sleep(everyXSeconds)
 
-        self.checkTr.terminate()
 
 
     def onSendButton(self):
@@ -314,14 +372,20 @@ class ClientWin(QMainWindow):
         self.imageLabel.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
         self.imageLabel.setScaledContents(True)
         mar = self.ChatWindow.getContentsMargins()
+
+        self.imageLabelWidth = 600
+        self.imageLabelHeight = 400
         self.imageLabel.setMinimumSize(600, 400)
-        self.image = QImage("tem.png")
+        self.setDefaultImage(self.imageLabel)
+        self.scaleFactor = 1.0
+
+    def setDefaultImage(self, qlabel, imageFile = "tem.png"):
+        self.image = QImage(imageFile)
         if self.image.isNull():
-            QMessageBox.information(self, "Image Viewer", "Cannot load %s." % "tem.png")
+            QMessageBox.information(self, "Image Viewer", "Cannot load %s." % imageFile)
             return
 
-        self.imageLabel.setPixmap(QPixmap.fromImage(self.image))
-        self.scaleFactor = 1.0
+        qlabel.setPixmap(QPixmap.fromImage(self.image))
     
     def initSelfFrame(self):
         self.selfFrame = QLabel()
@@ -443,10 +507,12 @@ class ClientWin(QMainWindow):
             #     self.client = Client()
             try:
                 self.client.set_server_addr()   
+                print("BGG")
                 self.client.send_data_tcp(ret)
+                print("BGG2")
                 self.updateChatBox()
             except:
-                print("sth")
+                print("sth on new connection")
 
         self.sendButton.setEnabled(False)
         self.toggleAudioButton.setEnabled(False)
@@ -469,6 +535,17 @@ class ClientWin(QMainWindow):
             self.client.startThreads(self.ChatWindow)
         except ThreadError as e:
             print(str(e))
+
+    def hookVideoWindow(self):
+        pass
+
+    
+    def closeEvent_(self, event):
+        self.camera.closeCamera()
+        self.video_enabled = False
+        event.accept()
+
+
 
 class NewConnDialog(QDialog):
     def __init__(self, parent=None, *args, **kwargs):
@@ -544,6 +621,7 @@ class NewConnDialog(QDialog):
             return False
 
     def __del__(self):
+        print('Closing conn dialog')
         self.lineEdit.setText = ""
 
 
@@ -552,6 +630,7 @@ class NewConnDialog(QDialog):
 
 
 app = QApplication(sys.argv)
+app.setQuitOnLastWindowClosed(True)
 win = ClientWin()
 win.show()
 sys.exit(app.exec_())
